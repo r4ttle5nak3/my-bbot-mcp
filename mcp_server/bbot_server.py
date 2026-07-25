@@ -6,14 +6,13 @@ for the BBOT (Bighuge BLS OSINT Tool) framework, providing security
 reconnaissance capabilities through the MCP protocol.
 """
 
-import asyncio
 import copy
 import os
 import sys
 import time
 import json
 import logging
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
@@ -82,9 +81,8 @@ class BbotMcpServer:
                 'default_modules': ['http'],
                 'max_concurrent_scans': 3,
                 'allowed_modules': [
-                    'subdomain-enum', 'web-basic', 'web-thorough',
-                    'portscan', 'http', 'finger', 'cloud-enum',
-                    'technology', 'vulnerability', 'export'
+                    'http', 'finger', 'portscan', 'dnsbrute', 'httpx',
+                    'nuclei', 'gowitness', 'massdns', 'subfinder'
                 ],
                 'flag_categories': ['passive', 'active', 'aggressive', 'safe']
             },
@@ -200,7 +198,7 @@ class BbotMcpServer:
                 'scan_id': scan_config.get('scan_name', 'unknown') if 'scan_config' in locals() else 'unknown'
             }
 
-    async def get_scan_status(self, scan_id: str) -> str:
+    async def get_scan_status(self, scan_id: str) -> Dict[str, Any]:
         """
         Get the status of a running or completed scan.
 
@@ -208,7 +206,7 @@ class BbotMcpServer:
             scan_id: ID of the scan to check
 
         Returns:
-            Status information including scan progress and details
+            Dictionary with status information including scan progress and details
         """
         try:
             status = await self.scanner.get_status(scan_id)
@@ -216,7 +214,11 @@ class BbotMcpServer:
         except Exception as e:
             error_msg = f"Failed to get scan status: {str(e)}"
             logger.error(error_msg)
-            return f"Error retrieving scan status: {scan_id}"
+            return {
+                'error': error_msg,
+                'scan_id': scan_id,
+                'status': 'error'
+            }
 
     async def list_findings(
         self,
@@ -490,14 +492,21 @@ class BbotMcpServer:
             elif not self._is_valid_target(target):
                 errors.append(f"Invalid target format: {target}")
 
-        # Validate presets
+        # Validate presets against known BBOT presets
+        known_presets = {
+            'subdomain-enum', 'web-basic', 'web-thorough', 'portscan',
+            'cloud-enum', 'kitchen-sink', 'spider', 'spider-intense',
+            'nuclei', 'nuclei-budget', 'nuclei-intense', 'nuclei-technology',
+            'baddns-intense', 'code-enum', 'dirbust-heavy', 'dirbust-light',
+            'dotnet-audit', 'email-enum', 'fast', 'iis-shortnames',
+            'lightfuzz-heavy', 'lightfuzz-light', 'lightfuzz-medium',
+            'lightfuzz-superheavy', 'lightfuzz-xss', 'paramminer',
+            'tech-detect', 'web-screenshots'
+        }
         presets = config.get('presets', [])
         for preset in presets:
-            if preset not in self.config['scan']['default_presets']:
-                if preset not in ['subdomain-enum', 'web-basic', 'web-thorough',
-                                'portscan', 'http', 'finger', 'cloud-enum',
-                                'technology', 'vulnerability', 'export']:
-                    errors.append(f"Unknown preset: {preset}")
+            if preset not in known_presets:
+                errors.append(f"Unknown preset: {preset}")
 
         # Validate modules
         modules = config.get('modules', [])
@@ -522,6 +531,7 @@ class BbotMcpServer:
         Returns:
             True if target appears valid, False otherwise
         """
+        import re
         target = target.strip()
         if not target:
             return False
@@ -532,16 +542,24 @@ class BbotMcpServer:
         if '..' in target:
             return False
 
-        # Must contain a dot (domain or IP)
+        # Allow single-label hostnames (e.g., 'localhost')
         if '.' not in target:
-            return False
+            return bool(re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$', target))
 
-        # Basic domain validation - labels must be non-empty and use valid chars
+        # Check if it's a valid IPv4 address
+        ipv4_pattern = r'^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$'
+        ip_match = re.match(ipv4_pattern, target)
+        if ip_match:
+            return all(0 <= int(octet) <= 255 for octet in ip_match.groups())
+
+        # Domain validation - labels must be non-empty and use valid chars
         labels = target.split('.')
         for label in labels:
             if not label:
                 return False
-            if not all(c.isalnum() or c == '-' for c in label):
+            if len(label) > 63:
+                return False
+            if not re.match(r'^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$', label):
                 return False
 
         return True

@@ -137,17 +137,13 @@ class MockSubprocessProcess:
         self._return_code = return_code
         self._simulate_delay = simulate_delay
         self._terminated = False
-        self.stdout = type('MockStream', (), {'readline': lambda self: self._get_line()})()
-        self.stderr = type('MockStream', (), {'readline': lambda self: self._get_line()})()
+        self._stdout_lines = stdout.split('\n') if stdout else []
+        self._stderr_lines = stderr.split('\n') if stderr else []
+        self._stdout_index = 0
+        self._stderr_index = 0
+        self.stdout = _MockStream(self._stdout_lines, self._stdout_index)
+        self.stderr = _MockStream(self._stderr_lines, self._stderr_index)
         self.closed = False
-
-    def _get_line(self):
-        if hasattr(self, '_lines'):
-            if self._line_index < len(self._lines):
-                line = self._lines[self._line_index]
-                self._line_index += 1
-                return line
-        return None
 
     def read(self, size=-1):
         return self._stdout_data
@@ -157,6 +153,21 @@ class MockSubprocessProcess:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         pass
+
+
+class _MockStream:
+    """Helper stream that yields lines from a list."""
+
+    def __init__(self, lines, index):
+        self._lines = list(lines)
+        self._index = 0
+
+    def readline(self):
+        if self._index < len(self._lines):
+            line = self._lines[self._index]
+            self._index += 1
+            return line + '\n'
+        return ''
 
 
 # Command wrappers for tests
@@ -218,6 +229,8 @@ def subprocess_factory_helper():
         def __init__(self):
             self.pid = 12345
             self._terminated = False
+            self.stdout = _MockStream([], 0)
+            self.stderr = _MockStream([], 0)
 
         def poll(self):
             return None if not self._terminated else 0
@@ -230,11 +243,6 @@ def subprocess_factory_helper():
 
         def communicate(self, timeout=None):
             return ('stdout\n', 'stderr\n')
-
-        def stdout(self):
-            class MockStream:
-                def readline(self):
-                    return ''
     return MockProcess()
 
 
@@ -274,7 +282,7 @@ def generate_test_findings(count=5, prefix="finding"):
 def generate_test_modules(modules=None):
     """Generate test module config"""
     default_modules = ['module_one', 'module_two', 'module_three']
-    return modules or default_modules[:len(modules)]
+    return modules if modules else default_modules[:3]
 
 
 # Test configuration

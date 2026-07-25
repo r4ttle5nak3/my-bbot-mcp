@@ -1,3 +1,11 @@
+"""
+⚠️ DEPRECATED — use `python -m mcp_server` instead.
+
+This file is a legacy standalone version of the BBOT MCP server.
+The canonical implementation is in the mcp_server/ package.
+This file is kept for reference but may be removed in a future version.
+"""
+
 import asyncio
 from mcp.server.fastmcp import FastMCP
 from bbot.scanner import Scanner

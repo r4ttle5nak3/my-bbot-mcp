@@ -217,4 +217,5 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-.claude/settings.json
+.claude/
+scan_outputs/

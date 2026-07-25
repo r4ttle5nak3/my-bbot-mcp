@@ -11,7 +11,7 @@ CONFIG_FILE="${CONFIG_FILE:-./mcp_server/config/server.json}"
 HOST="${HOST:-localhost}"
 PORT="${PORT:-8080}"
 LOG_LEVEL="${LOG_LEVEL:-INFO}"
-BBOT_MCP_PATH="${BBOT_MCP_PATH:-./bbot_mcp.py}"
+BBOT_MCP_PATH="${BBOT_MCP_PATH:-./mcp_server}"
 
 # Colors for output
 RED='\033[0;31m'

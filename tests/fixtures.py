@@ -129,9 +129,11 @@ def sample_openapi_spec():
 @pytest.fixture
 def event_loop():
     """Create an event loop for async tests"""
-    loop = asyncio.get_event_loop()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
     yield loop
     loop.close()
+    asyncio.set_event_loop(None)
 
 
 @pytest.fixture
@@ -170,9 +172,8 @@ def test_config():
             'default_timeout': 10,
             'default_presets': ['subdomain-enum'],
             'allowed_modules': [
-                'subdomain-enum', 'web-basic', 'web-thorough',
-                'portscan', 'http', 'pinpoint', 'cloud-enum',
-                'technology', 'vulnerability', 'export'
+                'http', 'finger', 'portscan', 'dnsbrute', 'httpx',
+                'nuclei', 'gowitness', 'massdns', 'subfinder'
             ],
             'max_concurrent_scans': 2
         },

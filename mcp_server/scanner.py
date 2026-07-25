@@ -22,7 +22,7 @@ class BbotScanner:
     """
 
     def __init__(self,
-                 bbot_path: str = os.path.join(os.path.dirname(__file__), '..', 'bbot_mcp.py'),
+                 bbot_path: str = 'bbot',
                  timeout: int = 300,
                  retries: int = 3,
                  poll_interval: float = 5.0):
@@ -30,7 +30,7 @@ class BbotScanner:
         Initialize the BBOT scanner.
 
         Args:
-            bbot_path: Path to the BBOT MCP Python file
+            bbot_path: Path to the BBOT CLI binary (default: 'bbot', resolved from PATH)
             timeout: Default timeout for scans (seconds)
             retries: Number of automatic retries for failed scans
             poll_interval: Interval for checking running processes
@@ -201,11 +201,13 @@ class BbotScanner:
         finally:
             if scan_id in self.active_scans:
                 try:
-                    process = scan_info['process']
-                    if process.poll() is None:  # Still running
-                        process.terminate()
-                    await asyncio.sleep(0.1)  # Give it time to terminate
-                except Exception as terminate_err:
+                    scan_info = self.active_scans.get(scan_id)
+                    if scan_info:
+                        process = scan_info.get('process')
+                        if process and process.poll() is None:  # Still running
+                            process.terminate()
+                        await asyncio.sleep(0.1)  # Give it time to terminate
+                except Exception:
                     pass
 
     async def _stream_process_output(self, stream):
@@ -236,31 +238,27 @@ class BbotScanner:
         Args:
             scan_id: ID of the completed scan
         """
-        import json
-        try:
-            scan_info = self.active_scans.get(scan_id)
-            if not scan_info:
-                # Already completed, check completed scans? Actually we removed from active.
-                # We can try to read from completed scans info if we stored elsewhere.
-                # For simplicity, just return.
-                return
-            output_content = {
-                "scan_id": scan_id,
-                "config": scan_info.get('config', {}),
-                "output": scan_info.get('stdout_buffer', ''),
-                "stderr": scan_info.get('stderr_buffer', ''),
-                "status": scan_info.get('status', 'unknown'),
-                "duration_seconds": scan_info.get('duration', 0),
-                "completed_at": time.time()
-            }
+        scan_info = self.active_scans.get(scan_id)
+        if not scan_info:
+            return
+        output_content = {
+            "scan_id": scan_id,
+            "config": scan_info.get('config', {}),
+            "output": scan_info.get('stdout_buffer', ''),
+            "stderr": scan_info.get('stderr_buffer', ''),
+            "status": scan_info.get('status', 'unknown'),
+            "duration_seconds": scan_info.get('duration', 0),
+            "completed_at": time.time()
+        }
 
+        try:
             with open(scan_info['output_path'], 'w') as f:
                 json.dump(output_content, f, indent=2)
         except Exception as e:
             # Don't fail the entire process if file write fails
             print(f"Warning: Could not save scan output to file: {e}")
 
-    async def get_status(self, scan_id: str) -> str:
+    async def get_status(self, scan_id: str) -> Dict[str, Any]:
         """
         Get the current status of a running scan.
 
@@ -268,35 +266,41 @@ class BbotScanner:
             scan_id: ID of the scan to check
 
         Returns:
-            Status string describing the scan state
+            Dictionary with status information
         """
         if scan_id not in self.active_scans:
-            # Check completed scans file?
-            # For simplicity, just say not found
-            return f"No active scan found with name '{scan_id}'"
+            if scan_id in self.completed_scans:
+                return {
+                    'scan_id': scan_id,
+                    'status': 'completed',
+                    'message': 'Scan has completed'
+                }
+            return {
+                'scan_id': scan_id,
+                'status': 'not_found',
+                'error': f"No scan found with name '{scan_id}'"
+            }
 
         scan_info = self.active_scans[scan_id]
         status = scan_info.get('status', 'unknown')
-
-        if status == 'finished':
-            # Could read from file
-            return "Status: Completed\nDuration: Check output for results"
-
-        # Include basic status information
         uptime = time.time() - scan_info.get('start_time', time.time())
         hrs, rem = divmod(int(uptime), 3600)
         mins, secs = divmod(rem, 60)
 
-        return (
-            f"Status: {status}\n"
-            f"Started: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(scan_info.get('start_time', 0)))}\n"
-            f"Runtime: {hrs}h {mins}m {secs}s\n"
-            f"Commands: {scan_info.get('cmd', 'unknown')}"
-        )
+        return {
+            'scan_id': scan_id,
+            'status': status,
+            'started': time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(scan_info.get('start_time', 0))),
+            'runtime': f"{hrs}h {mins}m {secs}s",
+            'command': scan_info.get('cmd', 'unknown'),
+            'targets': scan_info.get('config', {}).get('targets', [])
+        }
 
     async def get_findings(self, scan_id: str, limit: int = 10) -> List[str]:
         """
         Retrieve scanned findings/events from a completed scan.
+
+        Reads the saved output JSON file and returns findings as formatted strings.
 
         Args:
             scan_id: ID of the completed scan
@@ -305,9 +309,29 @@ class BbotScanner:
         Returns:
             List of finding strings
         """
-        # In a full implementation we would parse BBOT output file
-        # For now, return empty list
-        return []
+        output_path = os.path.join(self.output_dir, f"{scan_id}.json")
+        if not os.path.exists(output_path):
+            # Check completed scans info
+            if scan_id in self.completed_scans:
+                return ["Scan completed — no output file found. Check BBOT CLI output."]
+            return []
+
+        try:
+            with open(output_path, 'r') as f:
+                data = json.load(f)
+
+            output_text = data.get('output', '')
+            stderr_text = data.get('stderr', '')
+
+            findings = []
+            for line in (output_text + '\n' + stderr_text).split('\n'):
+                line = line.strip()
+                if line:
+                    findings.append(line)
+
+            return findings[-limit:]
+        except Exception as e:
+            return [f"Error reading scan output: {str(e)}"]
 
     async def list_active_scans(self) -> List[Dict[str, Any]]:
         """

@@ -35,17 +35,12 @@ class TestMCPServer:
         self.server = BbotMcpServer()
 
         yield
-        # Cleanup after each test
-        try:
-            for scan_id in list(self.server.scanner.active_scans.keys()):
-                await self.server.cancel_scan(scan_id)
-        except Exception:
-            pass
-
-        # Cleanup after each test
-        # Stop any running scans
+        # Cleanup after each test - cancel any running scans
         for scan_id in list(self.server.scanner.active_scans.keys()):
-            await self.server.cancel_scan(scan_id)
+            try:
+                await self.server.cancel_scan(scan_id)
+            except Exception:
+                pass
 
     @pytest.mark.asyncio
     async def test_server_initialization(self):
@@ -206,16 +201,20 @@ class TestGetScanStatusTool:
         # Get status
         status = await self.server.get_scan_status(scan_id)
 
-        assert isinstance(status, str)
-        assert "Status: in_progress" in status
-        assert "example.com" in status or "Started:" in status
+        assert isinstance(status, dict)
+        assert status['status'] == 'in_progress'
+        assert status['scan_id'] == scan_id
+        assert 'targets' in status
+        assert 'started' in status
 
     @pytest.mark.asyncio
     async def test_get_status_nonexistent_scan(self):
         """Test getting status of nonexistent scan"""
         status = await self.server.get_scan_status("nonexistent_scan_123")
 
-        assert "No active scan found" in status
+        assert isinstance(status, dict)
+        assert status['status'] == 'not_found'
+        assert 'error' in status
 
 
 class TestListFindingsTool:
@@ -478,15 +477,19 @@ class TestTargetValidation:
         yield
 
     def test_valid_domain(self):
-        """Test valid domain names"""
+        """Test valid domain names and hostnames"""
         assert self.server._is_valid_target("example.com")
         assert self.server._is_valid_target("sub.example.com")
         assert self.server._is_valid_target("test.example.org")
+        assert self.server._is_valid_target("localhost")
 
     def test_valid_ip(self):
         """Test valid IP addresses"""
         assert self.server._is_valid_target("192.168.1.1")
         assert self.server._is_valid_target("10.0.0.1")
+        assert self.server._is_valid_target("8.8.8.8")
+        assert self.server._is_valid_target("255.255.255.255")
+        assert self.server._is_valid_target("0.0.0.0")
 
     def test_invalid_targets(self):
         """Test invalid targets"""
@@ -494,7 +497,8 @@ class TestTargetValidation:
         assert not self.server._is_valid_target("..")
         assert not self.server._is_valid_target(".example.com")
         assert not self.server._is_valid_target("example..com")
-        assert not self.server._is_valid_target("not-a-valid-format")
+        assert not self.server._is_valid_target("-invalid.com")
+        assert not self.server._is_valid_target("invalid-.com")
 
 
 if __name__ == "__main__":
