@@ -9,6 +9,7 @@ reconnaissance capabilities through the MCP protocol.
 import copy
 import os
 import sys
+import re
 import time
 import json
 import logging
@@ -492,7 +493,7 @@ class BbotMcpServer:
             elif not self._is_valid_target(target):
                 errors.append(f"Invalid target format: {target}")
 
-        # Validate presets against known BBOT presets
+        # Validate presets — check user-configured presets first, then known presets
         known_presets = {
             'subdomain-enum', 'web-basic', 'web-thorough', 'portscan',
             'cloud-enum', 'kitchen-sink', 'spider', 'spider-intense',
@@ -503,9 +504,11 @@ class BbotMcpServer:
             'lightfuzz-superheavy', 'lightfuzz-xss', 'paramminer',
             'tech-detect', 'web-screenshots'
         }
+        # Allow any preset the user has configured as a default
+        configured_presets = set(self.config.get('scan', {}).get('default_presets', []))
         presets = config.get('presets', [])
         for preset in presets:
-            if preset not in known_presets:
+            if preset not in known_presets and preset not in configured_presets:
                 errors.append(f"Unknown preset: {preset}")
 
         # Validate modules
@@ -531,7 +534,6 @@ class BbotMcpServer:
         Returns:
             True if target appears valid, False otherwise
         """
-        import re
         target = target.strip()
         if not target:
             return False
@@ -608,8 +610,8 @@ def main():
     This function initializes the server and starts serving MCP requests.
     """
     server = BbotMcpServer()
-    print("Initializing BBOT MCP Server...")
-    print(f"Server configuration: {server.get_server_info()}")
+    logger.info("Initializing BBOT MCP Server...")
+    logger.info("Server configuration: %s", server.get_server_info())
 
     try:
         server.run()

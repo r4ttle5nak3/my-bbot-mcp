@@ -1,11 +1,14 @@
-import sys
 import os
+import re
 import subprocess
 import asyncio
 import time
 import json
 import hashlib
+import logging
 from typing import Dict, Any, List
+
+logger = logging.getLogger(__name__)
 
 class BbotScanner:
     """
@@ -91,7 +94,7 @@ class BbotScanner:
             scan_id = self.generate_scan_id(scan_config)
 
             # Prepare command line arguments
-            cmd_args = [sys.executable, self.bbot_path]
+            cmd_args = [self.bbot_path]
 
             # Add targets
             for target in scan_config.get('targets', []):
@@ -120,7 +123,7 @@ class BbotScanner:
                 stderr=subprocess.PIPE,
                 text=True,
                 bufsize=1,
-                close_fds=False
+                close_fds=True
             )
 
             # Store scan state
@@ -197,6 +200,9 @@ class BbotScanner:
                 scan_info['status'] = 'error'
                 scan_info['error'] = str(e)
                 await self._save_output_to_file(scan_id)
+                # Move from active to completed so the scan doesn't linger
+                del self.active_scans[scan_id]
+            self.completed_scans.add(scan_id)
 
         finally:
             if scan_id in self.active_scans:
@@ -222,7 +228,7 @@ class BbotScanner:
         """
         try:
             while True:
-                line = await asyncio.get_event_loop().run_in_executor(
+                line = await asyncio.get_running_loop().run_in_executor(
                     None, stream.readline
                 )
                 if not line:  # EOF
@@ -256,7 +262,7 @@ class BbotScanner:
                 json.dump(output_content, f, indent=2)
         except Exception as e:
             # Don't fail the entire process if file write fails
-            print(f"Warning: Could not save scan output to file: {e}")
+            logger.warning("Could not save scan output to file: %s", e)
 
     async def get_status(self, scan_id: str) -> Dict[str, Any]:
         """
@@ -309,9 +315,10 @@ class BbotScanner:
         Returns:
             List of finding strings
         """
-        output_path = os.path.join(self.output_dir, f"{scan_id}.json")
+        # Sanitize scan_id to prevent path traversal
+        safe_scan_id = re.sub(r'[^a-zA-Z0-9_\-]', '', scan_id)
+        output_path = os.path.join(self.output_dir, f"{safe_scan_id}.json")
         if not os.path.exists(output_path):
-            # Check completed scans info
             if scan_id in self.completed_scans:
                 return ["Scan completed — no output file found. Check BBOT CLI output."]
             return []
@@ -329,7 +336,8 @@ class BbotScanner:
                 if line:
                     findings.append(line)
 
-            return findings[-limit:]
+            effective_limit = limit if limit is not None else len(findings)
+            return findings[-effective_limit:]
         except Exception as e:
             return [f"Error reading scan output: {str(e)}"]
 
