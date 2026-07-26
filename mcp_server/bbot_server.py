@@ -50,11 +50,13 @@ class BbotMcpServer:
             instructions="Security reconnaissance and OSINT analysis using BBOT"
         )
 
-        # Initialize scanner
-        self.scanner = BbotScanner()
-
-        # Load configuration
+        # Load configuration first (before initializing scanner, which needs config)
         self.config = self._load_config(config_path)
+
+        # Initialize scanner (pass API keys from config)
+        self.scanner = BbotScanner(
+            api_keys=self.config.get('api_keys', {})
+        )
 
         # Register MCP tools
         self._register_mcp_tools()
@@ -69,8 +71,12 @@ class BbotMcpServer:
         """
         Load server configuration from file or use defaults.
 
+        If no config_path is given, the method looks for a configuration file
+        at a default location relative to the package directory:
+            mcp_server/config/bbot_mcp_config.json
+
         Args:
-            config_path: Path to configuration file
+            config_path: Path to configuration file (optional)
 
         Returns:
             Configuration dictionary
@@ -96,6 +102,29 @@ class BbotMcpServer:
                 'directory': 'scan_outputs',
                 'formats': ['json', 'text', 'csv'],
                 'max_file_size': 10 * 1024 * 1024  # 10MB
+            },
+            'api_keys': {
+                # BBOT API keys — set these in a config JSON file or env vars.
+                # Each key maps to one or more BBOT modules. See API_KEY_CONFIG_MAP in scanner.py.
+                'shodan_dns': '',
+                'shodan_idb': '',
+                'chaos': '',
+                'virustotal': '',
+                'securitytrails': '',
+                'censys': '',
+                'github': '',
+                'hunterio': '',
+                'fullhunt': '',
+                'leakix': '',
+                'bevigil': '',
+                'builtwith': '',
+                'c99': '',
+                'bufferoverrun': '',
+                'otx': '',
+                'postman': '',
+                'subdomainradar': '',
+                'trickest': '',
+                'certspotter': ''
             }
         }
 
@@ -111,6 +140,28 @@ class BbotMcpServer:
                 logger.info("Configuration loaded from %s", config_path)
             except Exception as e:
                 logger.warning("Failed to load config from %s: %s", config_path, str(e))
+                config = default_config
+        elif not config_path:
+            # Auto-discover config file at default location
+            default_config_path = os.path.join(
+                os.path.dirname(__file__), 'config', 'bbot_mcp_config.json'
+            )
+            if os.path.exists(default_config_path):
+                try:
+                    with open(default_config_path, 'r') as f:
+                        user_config = json.load(f)
+                    config = copy.deepcopy(default_config)
+                    for section, defaults in config.items():
+                        if section in user_config:
+                            defaults.update(user_config[section])
+                    logger.info("Configuration auto-discovered from %s", default_config_path)
+                except Exception as e:
+                    logger.warning(
+                        "Failed to load auto-discovered config from %s: %s",
+                        default_config_path, str(e)
+                    )
+                    config = default_config
+            else:
                 config = default_config
         else:
             config = default_config
@@ -582,15 +633,30 @@ class BbotMcpServer:
             'config': self.config
         }
 
-    def run(self, transport: str = "stdio"):
+    def run(self, transport: str = "stdio", host: Optional[str] = None, port: Optional[int] = None):
         """
         Run the MCP server over the given transport.
 
         FastMCP owns the event loop, so this method is synchronous and
         must NOT be awaited or called inside an existing asyncio loop.
         Defaults to stdio, which uses stdin/stdout to talk to the agent.
+
+        Args:
+            transport: Transport protocol ("stdio", "sse", or "streamable-http")
+            host: Host address for SSE/HTTP transports (default: from config or 127.0.0.1)
+            port: Port number for SSE/HTTP transports (default: from config or 8080)
         """
-        logger.info("Starting BBOT MCP Server (transport=%s)...", transport)
+        # For persistent transports (sse, streamable-http), set host/port from config or args
+        if transport in ("sse", "streamable-http"):
+            self.mcp.settings.host = host or self.config.get('server', {}).get('host', '127.0.0.1')
+            self.mcp.settings.port = port or self.config.get('server', {}).get('port', 8080)
+
+        # Use JSON responses for streamable-http (easier for programmatic clients like curl)
+        if transport == "streamable-http":
+            self.mcp.settings.json_response = True
+
+        logger.info("Starting BBOT MCP Server (transport=%s, host=%s, port=%s)...",
+                     transport, self.mcp.settings.host, self.mcp.settings.port)
 
         try:
             self.mcp.run(transport=transport)

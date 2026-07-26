@@ -1,0 +1,28 @@
+{
+    "scan": {
+        "default_timeout": 300,
+        "default_presets": ["subdomain-enum"],
+        "default_modules": ["http"]
+    },
+    "api_keys": {
+        "shodan_dns": "",
+        "shodan_idb": "",
+        "chaos": "",
+        "virustotal": "",
+        "securitytrails": "",
+        "censys": "",
+        "github": "",
+        "hunterio": "",
+        "fullhunt": "",
+        "leakix": "",
+        "bevigil": "",
+        "builtwith": "",
+        "c99": "",
+        "bufferoverrun": "",
+        "otx": "",
+        "postman": "",
+        "subdomainradar": "",
+        "trickest": "",
+        "certspotter": ""
+    }
+}
